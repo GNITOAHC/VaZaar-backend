@@ -81,3 +81,12 @@ create table Cart_Has_Items (
     foreign key (Cart_Serial) references Cart(Serial),
     foreign key (Items_Serial) references Items(Serial)
 );
+
+create table User_Reset_password (
+	User_Mail varchar(30) not null,
+    Token varchar(100) not null,
+    Create_at datetime not null,
+    Expired_at datetime not null,
+    primary key (User_Mail, Token),
+    foreign key (User_Mail) references User(Mail)
+);
