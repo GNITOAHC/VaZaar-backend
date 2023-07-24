@@ -2,6 +2,10 @@ import express from 'express'
 import connection from '../mysql'
 import bcrypt from 'bcrypt'
 import jwt from 'jsonwebtoken'
+import crypto from 'crypto'
+
+import { hashPassword, sendMail, resetPassword } from './auth.utils'
+
 const router = express.Router()
 
 const JWT_SECRET = process.env.JWT_SECRET as string
@@ -14,21 +18,15 @@ router.use((_req, _res, next) => {
   next()
 })
 
-async function hashPassword(password: string): Promise<string> {
-  const saltRound = 10
-  const hashedPassword = await bcrypt.hash(password, saltRound)
-  return hashedPassword
-}
-
 router.post('/register', async (req, res) => {
   const query = `select * from User where User.Mail = "${req.body.Mail}"`
-  /* const emailExist = await connection */
   connection.query(query, async (err, results, _fields) => {
     if (err) {
+      console.log(err)
       return res.status(500).send({ message: 'Internal Server Error' })
     }
     const result = results as Array<any>
-    console.log(result)
+    /* console.log(result) */
     if (result.length > 0) {
       return res.status(401).send({ message: 'Email already exists' })
     } else {
@@ -47,13 +45,13 @@ router.post('/register', async (req, res) => {
         insert into User (Mail, Id, Sex, Name, Password, Nick_name, Model_id)
         values ("${req.body.Mail}", ${req.body.Id}, "${req.body.Sex}", "${req.body.Name}", "${hashedPassword}", "${req.body.Nick_name}", ${req.body.Model_id});
       `
-      connection.query(registerUser, (err, result, _fields) => {
+      connection.query(registerUser, (err, _result, _fields) => {
         if (err) {
           /* return res.send(err) */
           console.log(err)
           return res.status(500).send({ message: 'Internal server error' })
         }
-        console.log(result)
+        /* console.log(result) */
         return res.status(200).send({ message: 'Register success' })
       })
     }
@@ -72,7 +70,6 @@ router.post('/login', async (req, res) => {
       /* User not exists */
       return res.status(401).send({ message: 'Email not exists' })
     } else {
-      console.log(result[0])
       const validPassword = await bcrypt.compare(
         req.body.Password,
         result[0].Password
@@ -112,6 +109,47 @@ router.get('/verify', async (req, res) => {
   } catch (err) {
     return res.status(400).send({ verified: false })
   }
+})
+
+router.post('/forget-password', async (req, res) => {
+  const query = `select * from User where Mail = '${req.body.Mail}'`
+  connection.query(query, async (err, results, _fields) => {
+    if (err) return res.status(500).send({ message: 'Internal server error' })
+    const result = results as Array<any>
+    if (result.length === 0)
+      return res.status(404).send({ message: 'User not found' })
+
+    /* Remove old reset token */
+    const removeOldToken = `delete from User_Reset_password where User_Mail = "${req.body.Mail}";`
+    connection.query(removeOldToken, (err, _results, _fields) => {
+      if (err) return res.status(500).send({ message: 'Internal server error' })
+    })
+
+    /* Generate new reset token */
+    const resetToken = crypto.randomBytes(32).toString('hex')
+    const hashedToken = await hashPassword(resetToken)
+    const insertToken = `
+      insert into User_Reset_password (User_Mail, Token, Create_at, Expired_at)
+      values ('${req.body.Mail}', '${hashedToken}', now(), now() + interval 1 day)
+    `
+    connection.query(insertToken, (err, _results, _fields) => {
+      if (err) return res.status(500).send({ message: 'Internal server error' })
+    })
+    const link = `http://localhost:8080/password-reset?token=${resetToken}&mail=${req.body.Mail}`
+    await sendMail(
+      '110703038@g.nccu.edu.tw',
+      `Please reset your password here: ${link}`
+    )
+    res.send({ resetToken: resetToken, mail: req.body.Mail })
+  })
+})
+
+router.post('/reset-password', async (req, res) => {
+  const mail = req.body.Mail
+  const token = req.body.Token
+  const password = req.body.Password
+  const response = await resetPassword(mail, token, password)
+  res.send(response)
 })
 
 export default router
